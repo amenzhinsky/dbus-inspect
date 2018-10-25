@@ -24,6 +24,10 @@ var (
 	indentFlag  string
 	noColorFlag bool
 	sigsFlag    bool
+
+	methodsFlag    bool
+	propertiesFlag bool
+	signalsFlag    bool
 )
 
 func main() {
@@ -38,7 +42,10 @@ func main() {
 	//TODO: flag.StringVar(&ifaceFlag, "iface", "", "filter objects by the given path")
 	flag.StringVar(&indentFlag, "indent", "  ", "set indentation string")
 	flag.BoolVar(&noColorFlag, "no-color", false, "disable color in output text")
-	flag.BoolVar(&sigsFlag, "sigs", false, "show argument signatures instead of human-readable types")
+	flag.BoolVar(&sigsFlag, "signatures", false, "show argument signatures instead of human-readable types")
+	flag.BoolVar(&methodsFlag, "methods", false, "show only methods")
+	flag.BoolVar(&propertiesFlag, "properties", false, "show only properties")
+	flag.BoolVar(&signalsFlag, "signals", false, "show only signals")
 	flag.Parse()
 
 	if err := run(); err != nil {
@@ -108,7 +115,7 @@ func introspectNode(w io.Writer, c *dbus.Conn, path dbus.ObjectPath) error {
 		goto Children
 	}
 	fmt.Fprintln(w, color(string(path), termBold))
-	if err := printNode(w, &node, c.Object(destFlag, path)); err != nil {
+	if err := printNode(w, &node, c.Object(destFlag, path), indent(1)); err != nil {
 		return err
 	}
 	if pathFlag != "" {
@@ -134,33 +141,37 @@ func introspectFile(w io.Writer, r io.Reader) error {
 	if err := xml.Unmarshal(b, &node); err != nil {
 		return err
 	}
-	return printNode(w, &node, nil)
+	return printNode(w, &node, nil, indent(0))
 }
 
-func printNode(w io.Writer, node *introspect.Node, o dbus.BusObject) error {
+func sectionEnabled(v bool) bool {
+	return (!methodsFlag && !propertiesFlag && !signalsFlag) || v
+}
+
+func printNode(w io.Writer, node *introspect.Node, o dbus.BusObject, indent func(int) string) error {
 	for _, iface := range node.Interfaces {
-		fmt.Fprintln(w, indent(1)+color(iface.Name, termGreen))
-		if len(iface.Methods) > 0 {
-			fmt.Fprintln(w, indent(2)+color("Methods", termYellow))
+		fmt.Fprintln(w, indent(0)+color(iface.Name, termGreen))
+		if len(iface.Methods) > 0 && sectionEnabled(methodsFlag) {
+			fmt.Fprintln(w, indent(1)+color("Methods", termYellow))
 			for _, method := range iface.Methods {
 				for _, annotation := range method.Annotations {
-					fmt.Fprintf(w, "%s%s\n", indent(3), fmtAnnotation(annotation))
+					fmt.Fprintf(w, "%s%s\n", indent(2), fmtAnnotation(annotation))
 				}
 				in, out, err := methodArgs(method.Args)
 				if err != nil {
 					return err
 				}
-				fmt.Fprintf(w, "%s%s(%s) → (%s)\n", indent(3), method.Name, fmtArgs(in), fmtArgs(out))
+				fmt.Fprintf(w, "%s%s(%s) → (%s)\n", indent(2), method.Name, fmtArgs(in), fmtArgs(out))
 			}
 		}
-		if len(iface.Properties) > 0 {
+		if len(iface.Properties) > 0 && sectionEnabled(propertiesFlag) {
 			fmt.Fprintln(w, indent(2)+color("Properties", termYellow))
 			for _, property := range iface.Properties {
 				for _, annotation := range property.Annotations {
-					fmt.Fprintf(w, "%s%s\n", indent(3), fmtAnnotation(annotation))
+					fmt.Fprintf(w, "%s%s\n", indent(2), fmtAnnotation(annotation))
 				}
 				fmt.Fprintf(w, "%s%s %s %s",
-					indent(3),
+					indent(2),
 					property.Name, fmtArgType(property.Type), color("["+property.Access+"]", termGray))
 
 				if o == nil {
@@ -176,21 +187,23 @@ func printNode(w io.Writer, node *introspect.Node, o dbus.BusObject) error {
 				}
 			}
 		}
-		if len(iface.Signals) > 0 {
-			fmt.Fprintln(w, indent(2)+color("Signals", termYellow))
+		if len(iface.Signals) > 0 && sectionEnabled(signalsFlag) {
+			fmt.Fprintln(w, indent(1)+color("Signals", termYellow))
 			for _, signal := range iface.Signals {
 				for _, annotation := range signal.Annotations {
-					fmt.Fprintf(w, "%s%s\n", indent(3), fmtAnnotation(annotation))
+					fmt.Fprintf(w, "%s%s\n", indent(2), fmtAnnotation(annotation))
 				}
-				fmt.Fprintf(w, "%s%s(%s)\n", indent(3), signal.Name, fmtArgs(signal.Args))
+				fmt.Fprintf(w, "%s%s(%s)\n", indent(2), signal.Name, fmtArgs(signal.Args))
 			}
 		}
 	}
 	return nil
 }
 
-func indent(n int) string {
-	return strings.Repeat(indentFlag, n)
+func indent(n int) func(int) string {
+	return func(i int) string {
+		return strings.Repeat(indentFlag, i+n)
+	}
 }
 
 const (
@@ -306,16 +319,11 @@ func fmtAnnotation(annotation introspect.Annotation) string {
 }
 
 func fmtSig(sig string) string {
-	var r []string
-	for i := 0; i < len(sig); {
-		s, rlen := next(sig[i:])
-		if rlen == 0 {
-			break
-		}
-		i += rlen
-		r = append(r, s)
+	s, rlen := next(sig)
+	if rlen != len(sig) {
+		return "Malformed(" + sig + ")"
 	}
-	return strings.Join(r, ", ")
+	return s
 }
 
 func next(sig string) (string, int) {
@@ -378,8 +386,21 @@ func next(sig string) (string, int) {
 			}
 			i++
 		}
-		return "Struct(" + fmtSig(sig[1:i-1]) + ")", i
+		return "Struct(" + structFields(sig[1:i-1]) + ")", i
 	default:
 		return "Unknown(" + string(sig[0]) + ")", 1
 	}
+}
+
+func structFields(sig string) string {
+	fields := make([]string, 0, len(sig))
+	for i := 0; i < len(sig); {
+		s, rlen := next(sig[i:])
+		if rlen == 0 {
+			break
+		}
+		i += rlen
+		fields = append(fields, s)
+	}
+	return strings.Join(fields, ", ")
 }
