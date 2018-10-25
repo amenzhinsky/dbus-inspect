@@ -38,8 +38,7 @@ func main() {
 	flag.BoolVar(&qFlag, "q", false, "provide short overview, destination names or paths only")
 	flag.BoolVar(&systemFlag, "system", false, "connect to the system bus instead of the session one")
 	flag.StringVar(&destFlag, "dest", "", "specify the destination name to inspect")
-	flag.StringVar((*string)(&pathFlag), "path", "", "inspect only the given path")
-	//TODO: flag.StringVar(&ifaceFlag, "iface", "", "filter objects by the given path")
+	flag.StringVar((*string)(&pathFlag), "path", "", "inspect only the named path, used only with -dest")
 	flag.StringVar(&indentFlag, "indent", "  ", "set indentation string")
 	flag.BoolVar(&noColorFlag, "no-color", false, "disable color in output text")
 	flag.BoolVar(&sigsFlag, "signatures", false, "show argument signatures instead of human-readable types")
@@ -48,29 +47,32 @@ func main() {
 	flag.BoolVar(&signalsFlag, "signals", false, "show only signals")
 	flag.Parse()
 
-	if err := run(); err != nil {
+	if err := run(os.Stdout); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %s\n", err)
 		os.Exit(1)
 	}
 }
 
-func run() error {
+func run(w io.Writer) error {
 	if flag.NArg() > 0 {
-		if destFlag != "" || pathFlag != "" {
-			return errors.New("cannot use -dest and -path flags with file arguments")
+		if destFlag != "" {
+			return errors.New("cannot use -dest with file arguments")
 		}
 		for _, path := range flag.Args() {
 			f, err := os.OpenFile(path, os.O_RDONLY, 0644)
 			if err != nil {
 				return err
 			}
-			if err = introspectFile(os.Stdout, f); err != nil {
+			if err = introspectFile(w, f); err != nil {
 				f.Close()
 				return err
 			}
 			f.Close()
 		}
 		return nil
+	}
+	if destFlag == "" {
+		return introspectFile(w, os.Stdin)
 	}
 
 	c, err := connect()
@@ -86,7 +88,7 @@ func run() error {
 	if pathFlag != "" {
 		path = pathFlag
 	}
-	if err = introspectNode(os.Stdout, c, path); err != nil {
+	if err = introspectNode(w, c, path); err != nil {
 		return err
 	}
 	return nil
