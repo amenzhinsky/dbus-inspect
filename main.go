@@ -24,6 +24,8 @@ var (
 	indentFlag  string
 	noColorFlag bool
 	sigsFlag    bool
+	valuesFlag  bool
+	xmlFlag     bool
 
 	methodsFlag    bool
 	propertiesFlag bool
@@ -32,7 +34,7 @@ var (
 
 func main() {
 	flag.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Usage of %s [FLAG...] [FILE...]\n\nFlags:\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "Usage: %s [flag...] [path...]\n\nFlags:\n", os.Args[0])
 		flag.PrintDefaults()
 	}
 	flag.BoolVar(&qFlag, "q", false, "provide short overview, destination names or paths only")
@@ -45,6 +47,8 @@ func main() {
 	flag.BoolVar(&methodsFlag, "methods", false, "show only methods")
 	flag.BoolVar(&propertiesFlag, "properties", false, "show only properties")
 	flag.BoolVar(&signalsFlag, "signals", false, "show only signals")
+	flag.BoolVar(&valuesFlag, "values", false, "read property values")
+	flag.BoolVar(&xmlFlag, "xml", false, "output xml introspectable")
 	flag.Parse()
 
 	if err := run(os.Stdout); err != nil {
@@ -58,21 +62,15 @@ func run(w io.Writer) error {
 		if destFlag != "" {
 			return errors.New("cannot use -dest with file arguments")
 		}
-		for _, path := range flag.Args() {
-			f, err := os.OpenFile(path, os.O_RDONLY, 0644)
-			if err != nil {
+		if valuesFlag {
+			return errors.New("cannot use -values flag with file arguments")
+		}
+		for i := 0; i < flag.NArg(); i++ {
+			if err := introspectFile(w, flag.Arg(i)); err != nil {
 				return err
 			}
-			if err = introspectFile(w, f); err != nil {
-				f.Close()
-				return err
-			}
-			f.Close()
 		}
 		return nil
-	}
-	if destFlag == "" {
-		return introspectFile(w, os.Stdin)
 	}
 
 	c, err := connect()
@@ -92,6 +90,20 @@ func run(w io.Writer) error {
 		return err
 	}
 	return nil
+}
+
+func introspectFile(w io.Writer, path string) error {
+	f, err := os.OpenFile(path, os.O_RDONLY, 0644)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	var node introspect.Node
+	if err := xml.NewDecoder(f).Decode(&node); err != nil {
+		return err
+	}
+	return printNode(w, &node, nil, indent(0))
 }
 
 func connect() (*dbus.Conn, error) {
@@ -129,21 +141,11 @@ Children:
 		if path != "/" {
 			next = path + next
 		}
-		introspectNode(w, c, next)
+		if err := introspectNode(w, c, next); err != nil {
+			return err
+		}
 	}
 	return nil
-}
-
-func introspectFile(w io.Writer, r io.Reader) error {
-	b, err := ioutil.ReadAll(r)
-	if err != nil {
-		return err
-	}
-	var node introspect.Node
-	if err := xml.Unmarshal(b, &node); err != nil {
-		return err
-	}
-	return printNode(w, &node, nil, indent(0))
 }
 
 func sectionEnabled(v bool) bool {
@@ -167,16 +169,20 @@ func printNode(w io.Writer, node *introspect.Node, o dbus.BusObject, indent func
 			}
 		}
 		if len(iface.Properties) > 0 && sectionEnabled(propertiesFlag) {
-			fmt.Fprintln(w, indent(2)+color("Properties", termYellow))
+			fmt.Fprintln(w, indent(1)+color("Properties", termYellow))
 			for _, property := range iface.Properties {
 				for _, annotation := range property.Annotations {
 					fmt.Fprintf(w, "%s%s\n", indent(2), fmtAnnotation(annotation))
 				}
 				fmt.Fprintf(w, "%s%s %s %s",
 					indent(2),
-					property.Name, fmtArgType(property.Type), color("["+property.Access+"]", termGray))
+					property.Name,
+					fmtArgType(property.Type),
+					color("["+property.Access+"]", termGray),
+				)
 
-				if o == nil {
+				// o is nil when we're reading xml definition from a file
+				if o == nil || !valuesFlag {
 					fmt.Fprintln(w)
 				} else {
 					var v interface{}
