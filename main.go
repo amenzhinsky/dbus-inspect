@@ -25,7 +25,6 @@ var (
 	noColorFlag bool
 	sigsFlag    bool
 	valuesFlag  bool
-	xmlFlag     bool
 
 	methodsFlag    bool
 	propertiesFlag bool
@@ -45,10 +44,9 @@ func main() {
 	flag.BoolVar(&noColorFlag, "no-color", false, "disable color in output text")
 	flag.BoolVar(&sigsFlag, "signatures", false, "show argument signatures instead of human-readable types")
 	flag.BoolVar(&methodsFlag, "methods", false, "show only methods")
-	flag.BoolVar(&propertiesFlag, "properties", false, "show only properties")
+	flag.BoolVar(&propertiesFlag, "props", false, "show only properties")
 	flag.BoolVar(&signalsFlag, "signals", false, "show only signals")
 	flag.BoolVar(&valuesFlag, "values", false, "read property values")
-	flag.BoolVar(&xmlFlag, "xml", false, "output xml introspectable")
 	flag.Parse()
 
 	if err := run(os.Stdout); err != nil {
