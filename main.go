@@ -325,11 +325,20 @@ func fmtAnnotation(annotation introspect.Annotation) string {
 }
 
 func fmtSig(sig string) string {
-	s, rlen := next(sig)
-	if rlen != len(sig) {
-		return "Malformed(" + sig + ")"
+	var r []string
+	var l int
+	for {
+		s, rlen := next(sig[l:])
+		if rlen == 0 {
+			return "Malformed(" + sig + ")"
+		}
+
+		r = append(r, s)
+		l += rlen
+		if len(sig) == l {
+			return strings.Join(r, ", ")
+		}
 	}
-	return s
 }
 
 func next(sig string) (string, int) {
@@ -370,11 +379,13 @@ func next(sig string) (string, int) {
 			i := 4
 			k, rlen := next(sig[2:])
 			if rlen != 1 {
-				panic("key is not a primitive")
+				// key is not a primitive
+				return "", 0
 			}
 			v, rlen := next(sig[3:])
 			if rlen == 0 {
-				panic("value is not available")
+				// value is not available
+				return "", 0
 			}
 			i += rlen
 			return "Dict{" + k + ", " + v + "}", i
