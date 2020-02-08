@@ -33,7 +33,7 @@ org.freedesktop.DBus 615 /usr/bin/dbus-daemon --system --address=systemd: --nofo
 Inspect a particular destination, say `org.bluez`:
 
 ```
-% dbus-inspect -system -dest org.bluez ⏎
+% dbus-inspect -system org.bluez ⏎
 
 /
   org.freedesktop.DBus.Introspectable

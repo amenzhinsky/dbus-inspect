@@ -19,27 +19,26 @@ import (
 var (
 	qFlag       bool
 	systemFlag  bool
-	destFlag    string
-	pathFlag    dbus.ObjectPath
 	indentFlag  string
 	noColorFlag bool
 	sigsFlag    bool
 	valuesFlag  bool
+	stdinFlag   bool
 
 	methodsFlag    bool
 	propertiesFlag bool
 	signalsFlag    bool
 )
 
+var errUsage = errors.New("invalid usage")
+
 func main() {
 	flag.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Usage: %s [flag...] [path...]\n\nFlags:\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "Usage: dbus-inspect [flag...] <destination> [path...]\n\nFlags:\n")
 		flag.PrintDefaults()
 	}
 	flag.BoolVar(&qFlag, "q", false, "provide short overview, destination names or paths only")
 	flag.BoolVar(&systemFlag, "system", false, "connect to the system bus instead of the session one")
-	flag.StringVar(&destFlag, "dest", "", "specify the destination name to inspect")
-	flag.StringVar((*string)(&pathFlag), "path", "", "inspect only the named path, used only with -dest")
 	flag.StringVar(&indentFlag, "indent", "  ", "set indentation string")
 	flag.BoolVar(&noColorFlag, "no-color", false, "disable color in output text")
 	flag.BoolVar(&sigsFlag, "signatures", false, "show argument signatures instead of human-readable types")
@@ -47,28 +46,25 @@ func main() {
 	flag.BoolVar(&propertiesFlag, "props", false, "show only properties")
 	flag.BoolVar(&signalsFlag, "signals", false, "show only signals")
 	flag.BoolVar(&valuesFlag, "values", false, "read property values")
+	flag.BoolVar(&stdinFlag, "stdin", false, "introspect stdin")
 	flag.Parse()
 
 	if err := run(os.Stdout); err != nil {
+		if err == errUsage {
+			flag.Usage()
+			os.Exit(2)
+		}
 		fmt.Fprintf(os.Stderr, "error: %s\n", err)
 		os.Exit(1)
 	}
 }
 
 func run(w io.Writer) error {
-	if flag.NArg() > 0 {
-		if destFlag != "" {
-			return errors.New("cannot use -dest with file arguments")
-		}
+	if stdinFlag {
 		if valuesFlag {
-			return errors.New("cannot use -values flag with file arguments")
+			return errors.New("cannot combine -values flag with -stdin")
 		}
-		for i := 0; i < flag.NArg(); i++ {
-			if err := introspectFile(w, flag.Arg(i)); err != nil {
-				return err
-			}
-		}
-		return nil
+		return introspectStdin(w)
 	}
 
 	c, err := connect()
@@ -77,28 +73,29 @@ func run(w io.Writer) error {
 	}
 	defer c.Close()
 
-	if destFlag == "" {
+	if flag.NArg() == 0 {
 		return listNames(c)
 	}
-	path := dbus.ObjectPath("/")
-	if pathFlag != "" {
-		path = pathFlag
+	if flag.NArg() > 2 {
+		return errUsage
 	}
-	if err = introspectNode(w, c, path); err != nil {
+
+	dest := flag.Arg(0)
+	path := dbus.ObjectPath("/")
+	recursive := true
+	if flag.NArg() > 1 {
+		recursive = false
+		path = dbus.ObjectPath(flag.Arg(1))
+	}
+	if err = introspectNode(w, c, dest, path, recursive); err != nil {
 		return err
 	}
 	return nil
 }
 
-func introspectFile(w io.Writer, path string) error {
-	f, err := os.OpenFile(path, os.O_RDONLY, 0644)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-
+func introspectStdin(w io.Writer) error {
 	var node introspect.Node
-	if err := xml.NewDecoder(f).Decode(&node); err != nil {
+	if err := xml.NewDecoder(os.Stdin).Decode(&node); err != nil {
 		return err
 	}
 	return printNode(w, &node, nil, indent(0))
@@ -111,9 +108,12 @@ func connect() (*dbus.Conn, error) {
 	return dbus.SessionBus()
 }
 
-func introspectNode(w io.Writer, c *dbus.Conn, path dbus.ObjectPath) error {
+func introspectNode(
+	w io.Writer, c *dbus.Conn,
+	dest string, path dbus.ObjectPath, recursive bool,
+) error {
 	var s string
-	if err := c.Object(destFlag, path).Call(
+	if err := c.Object(dest, path).Call(
 		"org.freedesktop.DBus.Introspectable.Introspect", 0,
 	).Store(&s); err != nil {
 		return err
@@ -127,10 +127,10 @@ func introspectNode(w io.Writer, c *dbus.Conn, path dbus.ObjectPath) error {
 		goto Children
 	}
 	fmt.Fprintln(w, color(string(path), termBold))
-	if err := printNode(w, &node, c.Object(destFlag, path), indent(1)); err != nil {
+	if err := printNode(w, &node, c.Object(dest, path), indent(1)); err != nil {
 		return err
 	}
-	if pathFlag != "" {
+	if !recursive {
 		return nil
 	}
 Children:
@@ -139,7 +139,7 @@ Children:
 		if path != "/" {
 			next = path + next
 		}
-		if err := introspectNode(w, c, next); err != nil {
+		if err := introspectNode(w, c, dest, next, recursive); err != nil {
 			return err
 		}
 	}
@@ -278,7 +278,7 @@ func cmdline(pid uint32) string {
 	if err != nil {
 		return ""
 	}
-	cmdline := strings.Replace(string(b), "\x00", " ", -1)
+	cmdline := strings.ReplaceAll(string(b), "\x00", " ")
 	return cmdline[:len(cmdline)-1]
 }
 
