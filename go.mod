@@ -1,3 +1,5 @@
 module github.com/goautomotive/dbus-inspect
 
-require github.com/godbus/dbus v0.0.0-20181101234600-2ff6f7ffd60f
+require github.com/godbus/dbus/v5 v5.0.3
+
+go 1.13

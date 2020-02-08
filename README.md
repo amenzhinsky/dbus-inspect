@@ -1,6 +1,10 @@
 # dbus-inspect
 
-Command-line DBus inspector, an alternative to [D-Feet](https://wiki.gnome.org/Apps/DFeet) if you're not running Xs.
+Command line D-Bus inspector.
+
+## Usecase
+
+It's an alternative to [D-Feet](https://wiki.gnome.org/Apps/DFeet) which requires a graphical environment or a nicer-looking replacement of [`busctl introspect`](https://www.freedesktop.org/software/systemd/man/busctl.html).
 
 ## Installation
 
@@ -59,3 +63,7 @@ Inspect a particular destination, say `org.bluez`:
 ```
 
 For additional help use `-h` or `-help` 
+
+## Contributing
+
+All contributions are welcome! Just fill in an issue or submit a pull request.
